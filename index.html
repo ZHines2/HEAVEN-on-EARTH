@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <title>Heaven on Earth SHUMP – Pickups & Stats Menu</title>
+  <title>Heaven on Earth SHUMP – SpriteSheet</title>
   <style>
     body { margin:0; overflow:hidden; background:#000 }
     canvas { display:block }
@@ -11,7 +11,7 @@
 <body>
 <canvas id="game"></canvas>
 <script>
-  // —— SETUP ——
+  // —— CANVAS SETUP ——
   const canvas = document.getElementById('game');
   const ctx    = canvas.getContext('2d');
   function resize() {
@@ -21,11 +21,12 @@
   window.addEventListener('resize', resize);
   resize();
 
+  // —— INPUT ——
   const keys = {};
   window.addEventListener('keydown', e => keys[e.code] = true);
   window.addEventListener('keyup',   e => keys[e.code] = false);
 
-  // —— STATE MACHINE & STATS ——
+  // —— STATES & STATS ——
   const STATE = { MENU:'MENU', PLAY:'PLAY', PAUSE:'PAUSE', GAMEOVER:'GAMEOVER' };
   let gameState = STATE.MENU;
 
@@ -42,26 +43,23 @@
   let playerLevel     = 1;
   let xp               = 0;
   let attributePoints  = 0;
-  function xpToNext() {
-    return playerLevel * 5;
-  }
+  function xpToNext() { return playerLevel * 5; }
   function getMoveSpeed() {
     return statConfig.speed.base
-      + statConfig.speed.inc * (playerStats.speedLevel-1);
+      + statConfig.speed.inc * (playerStats.speedLevel - 1);
   }
   function getFireRate() {
     return statConfig.fireRate.base
-      + statConfig.fireRate.inc * (playerStats.fireRateLevel-1);
+      + statConfig.fireRate.inc * (playerStats.fireRateLevel - 1);
   }
   function getBulletSpeed() {
     return statConfig.bulletSpd.base
-      + statConfig.bulletSpd.inc * (playerStats.bulletSpdLevel-1);
+      + statConfig.bulletSpd.inc * (playerStats.bulletSpdLevel - 1);
   }
 
-  // —— WORLD & PICKUPS —
+  // —— WORLD & ENTITIES ——
   const SCROLL_SPEED = 120;
   const PATTERNS     = ['straight','sine','homing'];
-  const pickups      = [];
 
   class Entity {
     constructor(x,y,r,color){
@@ -80,7 +78,7 @@
       this.vx=vx; this.vy=vy;
     }
     update(dt){ this.x += this.vx * dt; }
-    offscreen(){ return this.x < -this.r || this.x > canvas.width+this.r; }
+    offscreen(){ return this.x<-this.r || this.x>canvas.width+this.r; }
   }
   class Enemy extends Entity {
     constructor(x,y,type){
@@ -94,242 +92,245 @@
     update(dt){
       const t = performance.now()/1000 - this.spawnTime;
       this.x -= SCROLL_SPEED * dt;
-      if (this.type === 'sine') {
+      if (this.type==='sine') {
         this.y = this.oy + Math.sin(t*3)*50;
-      } else if (this.type === 'homing' && t > this.homeDelay) {
-        let dy = player.y - this.y;
-        let m  = Math.abs(dy)||1;
+      } else if (this.type==='homing' && t>this.homeDelay) {
+        let dy = player.y - this.y, m = Math.abs(dy)||1;
         this.y += (dy/m)*this.speed*dt;
       }
     }
   }
   class Pickup extends Entity {
-    constructor(x,y){
-      super(x,y,8,'lime');
-    }
-    update(dt){
-      this.x -= SCROLL_SPEED * dt;
-    }
+    constructor(x,y){ super(x,y,8,'lime'); }
+    update(dt){ this.x -= SCROLL_SPEED*dt; }
     offscreen(){ return this.x < -this.r; }
   }
 
-  // —— GAME VARS ——
-  let player, enemies, projectiles, timeSinceShot;
-  function resetGame() {
-    player        = new Entity(canvas.width*0.2, canvas.height/2, 14,'yellow');
-    enemies       = [];
-    projectiles   = [];
-    timeSinceShot = 0;
-    xp            = 0;
-    playerLevel   = 1;
-    attributePoints = 0;
-    pickups.length = 0;
+  // —— SPRITE SHEET LOADING ——
+  const sheet = new Image();
+  sheet.src = 'oldbabysheet.png';
+  let playerSprite;
+  sheet.onload = () => {
+    initPlayerSprite();
+    resetGame();
+    requestAnimationFrame(loop);
+  };
+
+  class AnimatedSprite {
+    constructor(img, fw, fh, cols, rows, dur){
+      this.img    = img;
+      this.fw     = fw;
+      this.fh     = fh;
+      this.cols   = cols;
+      this.rows   = rows;
+      this.dur    = dur;
+      this.timer  = 0;
+      this.frame  = 0;
+      this.row    = 0;
+    }
+    setRow(r){
+      if (r!==this.row){
+        this.row=r; this.frame=0; this.timer=0;
+      }
+    }
+    update(dt){
+      this.timer += dt;
+      if (this.timer >= this.dur){
+        this.timer -= this.dur;
+        this.frame = (this.frame+1) % this.cols;
+      }
+    }
+    draw(ctx,x,y,scale=1){
+      const sx = this.frame * this.fw;
+      const sy = this.row   * this.fh;
+      ctx.drawImage(
+        this.img,
+        sx, sy, this.fw, this.fh,
+        x - (this.fw*scale)/2,
+        y - (this.fh*scale)/2,
+        this.fw*scale, this.fh*scale
+      );
+    }
   }
-  function startPlay() {
+
+  function initPlayerSprite(){
+    const cols = 4, rows = 2;
+    const fw   = sheet.width  / cols;
+    const fh   = sheet.height / rows;
+    playerSprite = new AnimatedSprite(sheet, fw, fh, cols, rows, 0.1);
+  }
+
+  // —— GAME STATE ——
+  let player, enemies, projectiles, pickups, timeSinceShot;
+  function resetGame(){
+    player         = { x:canvas.width*0.2, y:canvas.height/2, r:14 };
+    enemies        = [];
+    projectiles    = [];
+    pickups        = [];
+    timeSinceShot  = 0;
+    xp             = 0;
+    playerLevel    = 1;
+    attributePoints= 0;
+    playerSprite.setRow(0);  // idle row
+  }
+
+  function startPlay(){
     resetGame();
     gameState = STATE.PLAY;
   }
 
   // —— STATE INPUT ——
-  function handleStateInput() {
-    if (gameState === STATE.MENU) {
-      if (keys['Enter']) { startPlay(); keys['Enter'] = false; }
+  function handleStateInput(){
+    if (gameState===STATE.MENU){
+      if (keys['Enter']){ startPlay(); keys['Enter']=false; }
     }
-    else if (gameState === STATE.PLAY) {
-      if (keys['KeyP']) { gameState = STATE.PAUSE; keys['KeyP'] = false; }
+    else if (gameState===STATE.PLAY){
+      if (keys['KeyP']){ gameState=STATE.PAUSE; keys['KeyP']=false; }
     }
-    else if (gameState === STATE.PAUSE) {
-      // Resume / Quit
-      if (keys['KeyP']) { gameState = STATE.PLAY; keys['KeyP'] = false; }
-      if (keys['KeyQ']) { gameState = STATE.MENU; keys['KeyQ'] = false; }
-      // Spend points
-      if (attributePoints > 0) {
-        if (keys['Digit1']) {
-          playerStats.speedLevel++; attributePoints--; keys['Digit1']=false;
-        }
-        if (keys['Digit2']) {
-          playerStats.fireRateLevel++; attributePoints--; keys['Digit2']=false;
-        }
-        if (keys['Digit3']) {
-          playerStats.bulletSpdLevel++; attributePoints--; keys['Digit3']=false;
-        }
+    else if (gameState===STATE.PAUSE){
+      if (keys['KeyP']){ gameState=STATE.PLAY; keys['KeyP']=false; }
+      if (keys['KeyQ']){ gameState=STATE.MENU; keys['KeyQ']=false; }
+      if (attributePoints>0){
+        if (keys['Digit1']){ playerStats.speedLevel++;     attributePoints--; keys['Digit1']=false; }
+        if (keys['Digit2']){ playerStats.fireRateLevel++;  attributePoints--; keys['Digit2']=false; }
+        if (keys['Digit3']){ playerStats.bulletSpdLevel++; attributePoints--; keys['Digit3']=false; }
       }
     }
-    else if (gameState === STATE.GAMEOVER) {
-      if (keys['Enter']) { startPlay(); keys['Enter']=false; }
-      if (keys['KeyQ'])   { gameState=STATE.MENU;   keys['KeyQ']=false; }
+    else if (gameState===STATE.GAMEOVER){
+      if (keys['Enter']){ startPlay(); keys['Enter']=false; }
+      if (keys['KeyQ'])  { gameState=STATE.MENU; keys['KeyQ']=false; }
     }
   }
 
   // —— UPDATE ——
-  function update(dt) {
-    // 1) move pickups
-    for (let i = pickups.length-1; i >= 0; i--) {
+  function update(dt){
+    // pickups
+    for (let i=pickups.length-1;i>=0;i--){
       pickups[i].update(dt);
       if (pickups[i].offscreen()) pickups.splice(i,1);
     }
-
-    // 2) spawn enemies
-    if (Math.random() < dt*1.2) {
+    // enemies spawn
+    if (Math.random() < dt*1.2){
       const y = Math.random()*canvas.height;
       const t = PATTERNS[Math.floor(Math.random()*PATTERNS.length)];
       enemies.push(new Enemy(canvas.width+20,y,t));
       if (enemies.length>40) enemies.shift();
     }
-
-    // 3) move player
+    // move & animate player
     const mv = getMoveSpeed();
     if (keys['ArrowUp']||keys['KeyW'])   player.y -= mv*dt;
     if (keys['ArrowDown']||keys['KeyS']) player.y += mv*dt;
     player.y = Math.max(player.r, Math.min(canvas.height-player.r, player.y));
+    playerSprite.setRow(0);
+    playerSprite.update(dt);
 
-    // 4) shooting
+    // shooting
     timeSinceShot += dt;
-    if (keys['Space'] && timeSinceShot > 1/getFireRate()) {
+    if (keys['Space'] && timeSinceShot > 1/getFireRate()){
       projectiles.push(
         new Projectile(player.x+player.r+4, player.y, getBulletSpeed(),0)
       );
       timeSinceShot = 0;
     }
-
-    // 5) update & cull projectiles
+    // proj cull
     projectiles.forEach(p=>p.update(dt));
-    for (let i=projectiles.length-1; i>=0; i--) {
+    for (let i=projectiles.length-1;i>=0;i--){
       if (projectiles[i].offscreen()) projectiles.splice(i,1);
     }
-
-    // 6) update enemies
+    // enemy update
     enemies.forEach(e=>e.update(dt));
-
-    // 7) bullet ↔ enemy + drop pickups
-    for (let i=projectiles.length-1; i>=0; i--) {
-      for (let j=enemies.length-1; j>=0; j--) {
+    // collisions & pickups
+    for (let i=projectiles.length-1;i>=0;i--){
+      for (let j=enemies.length-1;j>=0;j--){
         const p=projectiles[i], e=enemies[j];
-        if (Math.hypot(p.x-e.x,p.y-e.y) < p.r+e.r) {
-          // remove both
+        if (Math.hypot(p.x-e.x,p.y-e.y)<p.r+e.r){
           projectiles.splice(i,1);
-          const [ex,ey] = [e.x,e.y];
+          const ex=e.x, ey=e.y;
           enemies.splice(j,1);
-          // 30% chance to drop XP orb
           if (Math.random()<0.3) pickups.push(new Pickup(ex,ey));
           break;
         }
       }
     }
-
-    // 8) player ↔ pickup → gain XP/points
-    for (let i=pickups.length-1; i>=0; i--) {
-      const pk = pickups[i];
-      if (Math.hypot(pk.x-player.x, pk.y-player.y) < pk.r+player.r) {
-        xp++;
-        pickups.splice(i,1);
-        // level up?
-        if (xp >= xpToNext()) {
+    // collect XP
+    for (let i=pickups.length-1;i>=0;i--){
+      const pk=pickups[i];
+      if (Math.hypot(pk.x-player.x,pk.y-player.y) < pk.r+player.r){
+        xp++; pickups.splice(i,1);
+        if (xp >= xpToNext()){
           xp -= xpToNext();
           playerLevel++;
           attributePoints++;
         }
       }
     }
-
-    // 9) player ↔ enemy → game over
-    for (let e of enemies) {
-      if (Math.hypot(player.x-e.x,player.y-e.y) < player.r+e.r) {
+    // player hit?
+    for (let e of enemies){
+      if (Math.hypot(player.x-e.x,player.y-e.y) < player.r+e.r){
         gameState = STATE.GAMEOVER;
+        playerSprite.setRow(1); // hit row
       }
     }
   }
 
   // —— DRAW ——
-  function draw() {
+  function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    if (gameState === STATE.MENU) {
-      ctx.fillStyle = '#0f0';
-      ctx.font      = '48px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('HEAVEN ON EARTH SHUMP', canvas.width/2, canvas.height/2 - 20);
-      ctx.font = '24px monospace';
-      ctx.fillText('Press ENTER to Start', canvas.width/2, canvas.height/2 + 20);
+    if (gameState===STATE.MENU){
+      ctx.fillStyle='#0f0';
+      ctx.font='48px monospace'; ctx.textAlign='center';
+      ctx.fillText('HEAVEN ON EARTH SHUMP', canvas.width/2, canvas.height/2-20);
+      ctx.font='24px monospace';
+      ctx.fillText('Press ENTER to Start', canvas.width/2, canvas.height/2+20);
       return;
     }
 
-    // — world draw —
+    // world
     ctx.save();
-      player.draw();
+      playerSprite.draw(ctx, player.x, player.y, 0.8);
       enemies.forEach(e=>e.draw());
       projectiles.forEach(p=>p.draw());
       pickups.forEach(pk=>pk.draw());
     ctx.restore();
 
-    ctx.setTransform(1,0,0,1,0,0);  // lock HUD
-
-    // — HUD & XP bar —
-    const hudX = 10, hudY = 20;
-    ctx.font = '16px monospace';
-    ctx.fillStyle = '#0f0';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Lvl ${playerLevel}  XP: ${xp}/${xpToNext()}`, hudX, hudY);
+    // HUD
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.font='16px monospace'; ctx.fillStyle='#0f0'; ctx.textAlign='left';
+    ctx.fillText(`Lvl ${playerLevel}  XP: ${xp}/${xpToNext()}`, 10,20);
     ctx.fillText(
-      `Speed Lv ${playerStats.speedLevel}  Fire Lv ${playerStats.fireRateLevel}  Spd Lv ${playerStats.bulletSpdLevel}`,
-      hudX, hudY + 20
+      `1-Speed Lv:${playerStats.speedLevel}` +
+      ` 2-Fire Lv:${playerStats.fireRateLevel}` +
+      ` 3-Spd Lv:${playerStats.bulletSpdLevel}`,
+      10,40
     );
 
-    // — overlays —
-    if (gameState === STATE.PAUSE) {
-      // dim screen
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-
-      // paused text
-      ctx.fillStyle = '#ff0';
-      ctx.font      = '32px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('PAUSED', canvas.width/2, canvas.height/2 - 40);
-      ctx.font = '18px monospace';
-      ctx.fillText('P – Resume   Q – Main Menu', canvas.width/2, canvas.height/2 - 10);
-
-      // stats menu
-      const sx = canvas.width/2 - 120;
-      let sy = canvas.height/2 + 20;
-      ctx.fillStyle = '#0f0';
-      ctx.font = '18px monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText(`Attr Points: ${attributePoints}`, sx, sy);
-
-      sy += 30;
-      ctx.fillText(`1) Speed     (Lvl ${playerStats.speedLevel})`, sx, sy);
-      sy += 25;
-      ctx.fillText(`2) FireRate  (Lvl ${playerStats.fireRateLevel})`, sx, sy);
-      sy += 25;
-      ctx.fillText(`3) BulletSpd (Lvl ${playerStats.bulletSpdLevel})`, sx, sy);
-      sy += 30;
-      ctx.fillText(`Press 1/2/3 to upgrade`, sx, sy);
+    // overlays
+    if (gameState===STATE.PAUSE){
+      ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle='#ff0'; ctx.font='32px monospace'; ctx.textAlign='center';
+      ctx.fillText('PAUSED', canvas.width/2, canvas.height/2-40);
+      ctx.font='18px monospace';
+      ctx.fillText('P–Resume  Q–Main Menu', canvas.width/2, canvas.height/2-10);
     }
-    else if (gameState === STATE.GAMEOVER) {
-      ctx.fillStyle = 'rgba(0,0,0,0.7)';
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-      ctx.fillStyle = '#f00';
-      ctx.font      = '36px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 20);
-      ctx.font = '20px monospace';
-      ctx.fillText('Enter – Restart   Q – Main Menu', canvas.width/2, canvas.height/2 + 20);
+    else if (gameState===STATE.GAMEOVER){
+      ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle='#f00'; ctx.font='36px monospace'; ctx.textAlign='center';
+      ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2-20);
+      ctx.font='20px monospace';
+      ctx.fillText('Enter–Restart  Q–Main Menu', canvas.width/2, canvas.height/2+20);
     }
   }
 
   // —— MAIN LOOP ——
-  resetGame();
   let last = 0;
-  function loop(ts) {
-    const dt = (ts - last)/1000;
-    last = ts;
+  function loop(ts){
+    const dt = (ts-last)/1000; last=ts;
     handleStateInput();
-    if (gameState === STATE.PLAY) update(dt);
+    if (gameState===STATE.PLAY) update(dt);
     draw();
     requestAnimationFrame(loop);
   }
-  requestAnimationFrame(loop);
 </script>
 </body>
 </html>
