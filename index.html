@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <title>Heaven on Earth SHUMP – Complete JSON Atlas Prototype</title>
+  <title>Heaven on Earth SHUMP – Bitmap Padding Fix</title>
   <style>
     body { margin:0; overflow:hidden; background:#000 }
     canvas { display:block }
@@ -26,7 +26,7 @@
   window.addEventListener('keydown', e => keys[e.code] = true);
   window.addEventListener('keyup',   e => keys[e.code] = false);
 
-  // —— GAME STATES & STATS ——
+  // —— STATE & STATS ——
   const STATE = { MENU:'MENU', PLAY:'PLAY', PAUSE:'PAUSE', GAMEOVER:'GAMEOVER' };
   let gameState = STATE.MENU;
 
@@ -41,8 +41,8 @@
     bulletSpd: { base:400, inc:100}
   };
   let playerLevel     = 1;
-  let xp              = 0;
-  let attributePoints = 0;
+  let xp               = 0;
+  let attributePoints  = 0;
   function xpToNext() { return playerLevel * 5; }
   function getMoveSpeed() {
     return statConfig.speed.base
@@ -105,7 +105,38 @@
     offscreen(){ return this.x < -this.r; }
   }
 
-  // —— ANIMATED SPRITE HELPER ——
+  // —— SPRITE-SHEET LOADING & PADDING FIX ——
+  const sheet = new Image();
+  sheet.src = 'oldbabysheet.png';
+
+  const COLS = 4, ROWS = 2;
+  let bitmaps = [], playerSprite;
+
+  sheet.onload = async () => {
+    // compute uniform frame size and padding
+    const totalW = sheet.width, totalH = sheet.height;
+    const fw     = Math.floor(totalW  / COLS);
+    const fh     = Math.floor(totalH  / ROWS);
+    const padX   = Math.round((totalW - fw * COLS) / 2);
+    const padY   = Math.round((totalH - fh * ROWS) / 2);
+
+    // slice out each frame into an ImageBitmap
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const sx = padX + col * fw;
+        const sy = padY + row * fh;
+        bitmaps.push(
+          await createImageBitmap(sheet, sx, sy, fw, fh)
+        );
+      }
+    }
+
+    // build animated sprite (row 0=idle, row 1=hit)
+    playerSprite = new AnimatedSprite(bitmaps, COLS, 0.1);
+    resetGame();
+    requestAnimationFrame(loop);
+  };
+
   class AnimatedSprite {
     constructor(frames, cols, frameDur) {
       this.frames       = frames;
@@ -113,7 +144,7 @@
       this.frameDur     = frameDur;
       this.timer        = 0;
       this.currentFrame = 0;
-      this.row          = 0; // 0 = idle, 1 = hit
+      this.row          = 0;
     }
     setRow(r) {
       if (this.row !== r) {
@@ -138,33 +169,9 @@
     }
   }
 
-  // —— LOAD ATLAS & SPRITE-SHEET ——
-  let playerSprite, bitmaps = [];
-  async function loadAssets() {
-    // 1) fetch JSON atlas
-    const atlas = await fetch('oldbabysheet.json').then(r => r.json());
-    // 2) load sheet image
-    const sheet = new Image();
-    await new Promise(res => sheet.onload = res);
-    sheet.src = 'oldbabysheet.png';
-    // 3) build frames array
-    const order = ['idle_0','idle_1','idle_2','idle_3',
-                   'hit_0','hit_1','hit_2','hit_3'];
-    for (let key of order) {
-      const f = atlas.frames[key].frame;
-      const bmp = await createImageBitmap(sheet, f.x, f.y, f.w, f.h);
-      bitmaps.push(bmp);
-    }
-    // 4) create animated sprite
-    playerSprite = new AnimatedSprite(bitmaps, 4, 0.1);
-    // 5) start game
-    resetGame();
-    requestAnimationFrame(loop);
-  }
-
   // —— GAME STATE & RESET ——
   let player, enemies, projectiles, pickups, timeSinceShot;
-  function resetGame() {
+  function resetGame(){
     player          = { x:canvas.width*0.2, y:canvas.height/2, r:14 };
     enemies         = [];
     projectiles     = [];
@@ -174,9 +181,8 @@
     playerLevel     = 1;
     attributePoints = 0;
     playerSprite.setRow(0);
-    gameState = STATE.MENU;
   }
-  function startPlay() {
+  function startPlay(){
     resetGame();
     gameState = STATE.PLAY;
   }
@@ -203,65 +209,70 @@
 
   // —— UPDATE ——
   function update(dt){
-    // 1) pickups
+    // pickups
     for (let i=pickups.length-1; i>=0; i--){
       pickups[i].update(dt);
       if (pickups[i].offscreen()) pickups.splice(i,1);
     }
-    // 2) spawn enemies
-    if (Math.random()<dt*1.2){
-      const y=Math.random()*canvas.height;
-      const t=PATTERNS[Math.floor(Math.random()*PATTERNS.length)];
+    // spawn enemies
+    if (Math.random() < dt*1.2){
+      const y = Math.random()*canvas.height;
+      const t = PATTERNS[Math.floor(Math.random()*PATTERNS.length)];
       enemies.push(new Enemy(canvas.width+20,y,t));
-      if(enemies.length>40) enemies.shift();
+      if (enemies.length>40) enemies.shift();
     }
-    // 3) move & animate player
-    const mv=getMoveSpeed();
-    if(keys['ArrowUp']||keys['KeyW'])   player.y-=mv*dt;
-    if(keys['ArrowDown']||keys['KeyS']) player.y+=mv*dt;
-    player.y=Math.max(player.r,Math.min(canvas.height-player.r,player.y));
+    // move & animate player
+    const mv = getMoveSpeed();
+    if (keys['ArrowUp']||keys['KeyW'])   player.y -= mv*dt;
+    if (keys['ArrowDown']||keys['KeyS']) player.y += mv*dt;
+    player.y = Math.max(player.r, Math.min(canvas.height-player.r, player.y));
     playerSprite.setRow(0);
     playerSprite.update(dt);
-    // 4) shooting
-    timeSinceShot+=dt;
-    if(keys['Space']&&timeSinceShot>1/getFireRate()){
-      projectiles.push(new Projectile(
-        player.x+player.r+4, player.y, getBulletSpeed(),0
-      ));
-      timeSinceShot=0;
+
+    // shooting
+    timeSinceShot += dt;
+    if (keys['Space'] && timeSinceShot > 1/getFireRate()){
+      projectiles.push(
+        new Projectile(player.x+player.r+4, player.y, getBulletSpeed(),0)
+      );
+      timeSinceShot = 0;
     }
-    // 5) update & cull projectiles
+    // update & cull projectiles
     projectiles.forEach(p=>p.update(dt));
-    for(let i=projectiles.length-1;i>=0;i--){
-      if(projectiles[i].offscreen())projectiles.splice(i,1);
+    for (let i=projectiles.length-1;i>=0;i--){
+      if (projectiles[i].offscreen()) projectiles.splice(i,1);
     }
-    // 6) update enemies
+    // update enemies
     enemies.forEach(e=>e.update(dt));
-    // 7) bullet↔enemy + drop pickups
-    for(let i=projectiles.length-1;i>=0;i--){
-      for(let j=enemies.length-1;j>=0;j--){
+    // collisions & drops
+    for (let i=projectiles.length-1;i>=0;i--){
+      for (let j=enemies.length-1;j>=0;j--){
         const p=projectiles[i], e=enemies[j];
-        if(Math.hypot(p.x-e.x,p.y-e.y)<p.r+e.r){
+        if (Math.hypot(p.x-e.x,p.y-e.y)<p.r+e.r){
           projectiles.splice(i,1);
-          const ex=e.x,ey=e.y;
+          const ex=e.x, ey=e.y;
           enemies.splice(j,1);
-          if(Math.random()<0.3)pickups.push(new Pickup(ex,ey));
+          if (Math.random()<0.3) pickups.push(new Pickup(ex,ey));
           break;
         }
       }
     }
-    // 8) collect XP
-    for(let i=pickups.length-1;i>=0;i--){
+    // collect XP
+    for (let i=pickups.length-1;i>=0;i--){
       const pk=pickups[i];
-      if(Math.hypot(pk.x-player.x,pk.y-player.y)<pk.r+player.r){
+      if (Math.hypot(pk.x-player.x,pk.y-player.y)<pk.r+player.r){
         xp++; pickups.splice(i,1);
-        if(xp>=xpToNext()){ xp-=xpToNext(); playerLevel++; attributePoints++; }
+        if (xp>=xpToNext()){
+          xp-=xpToNext();
+          playerLevel++;
+          attributePoints++;
+        }
       }
     }
-    // 9) collision → GAMEOVER
-    for(let e of enemies){
-      if(Math.hypot(player.x-e.x,player.y-e.y)<player.r+e.r){
-        gameState=STATE.GAMEOVER;
+    // player hit?
+    for (let e of enemies){
+      if (Math.hypot(player.x-e.x,player.y-e.y)<player.r+e.r){
+        gameState = STATE.GAMEOVER;
         playerSprite.setRow(1);
       }
     }
@@ -271,11 +282,12 @@
   function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    if(gameState===STATE.MENU){
-      ctx.fillStyle='#0f0'; ctx.font='48px monospace'; ctx.textAlign='center';
-      ctx.fillText('HEAVEN ON EARTH SHUMP',canvas.width/2,canvas.height/2-20);
+    if (gameState===STATE.MENU){
+      ctx.fillStyle='#0f0';
+      ctx.font='48px monospace'; ctx.textAlign='center';
+      ctx.fillText('HEAVEN ON EARTH SHUMP', canvas.width/2, canvas.height/2-20);
       ctx.font='24px monospace';
-      ctx.fillText('Press ENTER to Start',canvas.width/2,canvas.height/2+20);
+      ctx.fillText('Press ENTER to Start', canvas.width/2, canvas.height/2+20);
       return;
     }
 
@@ -290,43 +302,40 @@
     // HUD
     ctx.setTransform(1,0,0,1,0,0);
     ctx.font='16px monospace'; ctx.fillStyle='#0f0'; ctx.textAlign='left';
-    ctx.fillText(`Lvl ${playerLevel}  XP: ${xp}/${xpToNext()}`,10,20);
+    ctx.fillText(`Lvl ${playerLevel}  XP: ${xp}/${xpToNext()}`, 10,20);
     ctx.fillText(
       `1-Speed Lv:${playerStats.speedLevel}`+
-      `  2-Fire Lv:${playerStats.fireRateLevel}`+
-      `  3-Spd Lv:${playerStats.bulletSpdLevel}`,
+      ` 2-Fire Lv:${playerStats.fireRateLevel}`+
+      ` 3-Spd Lv:${playerStats.bulletSpdLevel}`,
       10,40
     );
 
     // overlays
-    if(gameState===STATE.PAUSE){
+    if (gameState===STATE.PAUSE){
       ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.fillStyle='#ff0'; ctx.font='32px monospace'; ctx.textAlign='center';
-      ctx.fillText('PAUSED',canvas.width/2,canvas.height/2-40);
+      ctx.fillText('PAUSED', canvas.width/2, canvas.height/2-40);
       ctx.font='18px monospace';
-      ctx.fillText('P–Resume  Q–Main Menu',canvas.width/2,canvas.height/2-10);
+      ctx.fillText('P–Resume  Q–Main Menu', canvas.width/2, canvas.height/2-10);
     }
-    else if(gameState===STATE.GAMEOVER){
+    else if (gameState===STATE.GAMEOVER){
       ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.fillStyle='#f00'; ctx.font='36px monospace'; ctx.textAlign='center';
-      ctx.fillText('GAME OVER',canvas.width/2,canvas.height/2-20);
+      ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2-20);
       ctx.font='20px monospace';
-      ctx.fillText('Enter–Restart  Q–Main Menu',canvas.width/2,canvas.height/2+20);
+      ctx.fillText('Enter–Restart  Q–Main Menu', canvas.width/2, canvas.height/2+20);
     }
   }
 
   // —— MAIN LOOP ——
-  let last=0;
+  let last = 0;
   function loop(ts){
-    const dt=(ts-last)/1000; last=ts;
+    const dt = (ts - last)/1000; last = ts;
     handleStateInput();
-    if(gameState===STATE.PLAY) update(dt);
+    if (gameState===STATE.PLAY) update(dt);
     draw();
     requestAnimationFrame(loop);
   }
-
-  // Kick off asset loading & then start loop
-  loadAssets();
 </script>
 </body>
 </html>
