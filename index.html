@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <title>Heaven on Earth SHUMP – Full Bitmap Prototype</title>
+  <title>Heaven on Earth SHUMP – Bitmap Padding Fix</title>
   <style>
     body { margin:0; overflow:hidden; background:#000 }
     canvas { display:block }
@@ -26,7 +26,7 @@
   window.addEventListener('keydown', e => keys[e.code] = true);
   window.addEventListener('keyup',   e => keys[e.code] = false);
 
-  // —— GAME STATES & PLAYER STATS ——
+  // —— STATE & STATS ——
   const STATE = { MENU:'MENU', PLAY:'PLAY', PAUSE:'PAUSE', GAMEOVER:'GAMEOVER' };
   let gameState = STATE.MENU;
 
@@ -77,7 +77,7 @@
       this.vx=vx; this.vy=vy;
     }
     update(dt){ this.x += this.vx * dt; }
-    offscreen(){ return this.x < -this.r || this.x > canvas.width + this.r; }
+    offscreen(){ return this.x < -this.r || this.x > canvas.width+this.r; }
   }
   class Enemy extends Entity {
     constructor(x,y,type){
@@ -91,9 +91,9 @@
     update(dt){
       const t = performance.now()/1000 - this.spawnTime;
       this.x -= SCROLL_SPEED * dt;
-      if (this.type === 'sine') {
+      if (this.type==='sine') {
         this.y = this.oy + Math.sin(t*3)*50;
-      } else if (this.type === 'homing' && t > this.homeDelay) {
+      } else if (this.type==='homing' && t>this.homeDelay) {
         let dy = player.y - this.y, m = Math.abs(dy)||1;
         this.y += (dy/m)*this.speed*dt;
       }
@@ -105,47 +105,46 @@
     offscreen(){ return this.x < -this.r; }
   }
 
-  // —— SPRITE-SHEET & BITMAP LOADING ——
+  // —— SPRITE-SHEET LOADING & PADDING FIX ——
   const sheet = new Image();
   sheet.src = 'oldbabysheet.png';
 
-  const BITMAP_COLS = 4, BITMAP_ROWS = 2;
+  const COLS = 4, ROWS = 2;
   let bitmaps = [], playerSprite;
 
   sheet.onload = async () => {
-    // slice into ImageBitmap frames
-    const fw = sheet.width  / BITMAP_COLS;
-    const fh = sheet.height / BITMAP_ROWS;
-    for (let row = 0; row < BITMAP_ROWS; row++) {
-      for (let col = 0; col < BITMAP_COLS; col++) {
+    // compute uniform frame size and padding
+    const totalW = sheet.width, totalH = sheet.height;
+    const fw     = Math.floor(totalW  / COLS);
+    const fh     = Math.floor(totalH  / ROWS);
+    const padX   = Math.round((totalW - fw * COLS) / 2);
+    const padY   = Math.round((totalH - fh * ROWS) / 2);
+
+    // slice out each frame into an ImageBitmap
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const sx = padX + col * fw;
+        const sy = padY + row * fh;
         bitmaps.push(
-          await createImageBitmap(
-            sheet,
-            col*fw, row*fh,
-            fw, fh
-          )
+          await createImageBitmap(sheet, sx, sy, fw, fh)
         );
       }
     }
-    // init sprite, game and start loop
-    playerSprite = new AnimatedSprite(bitmaps, BITMAP_COLS, 0.1);
+
+    // build animated sprite (row 0=idle, row 1=hit)
+    playerSprite = new AnimatedSprite(bitmaps, COLS, 0.1);
     resetGame();
     requestAnimationFrame(loop);
   };
 
   class AnimatedSprite {
-    /**
-     * @param {ImageBitmap[]} frames
-     * @param {number} cols       frames per row
-     * @param {number} frameDuration seconds per frame
-     */
-    constructor(frames, cols, frameDuration) {
+    constructor(frames, cols, frameDur) {
       this.frames       = frames;
       this.cols         = cols;
-      this.frameDur     = frameDuration;
+      this.frameDur     = frameDur;
       this.timer        = 0;
       this.currentFrame = 0;
-      this.row          = 0;  // 0 = idle, 1 = hit
+      this.row          = 0;
     }
     setRow(r) {
       if (this.row !== r) {
@@ -164,7 +163,7 @@
     draw(ctx, x, y, scale = 1) {
       const idx = this.row * this.cols + this.currentFrame;
       const bmp = this.frames[idx];
-      const w   = bmp.width * scale;
+      const w   = bmp.width  * scale;
       const h   = bmp.height * scale;
       ctx.drawImage(bmp, x - w/2, y - h/2, w, h);
     }
@@ -172,7 +171,7 @@
 
   // —— GAME STATE & RESET ——
   let player, enemies, projectiles, pickups, timeSinceShot;
-  function resetGame() {
+  function resetGame(){
     player          = { x:canvas.width*0.2, y:canvas.height/2, r:14 };
     enemies         = [];
     projectiles     = [];
@@ -181,57 +180,48 @@
     xp              = 0;
     playerLevel     = 1;
     attributePoints = 0;
-    playerSprite.setRow(0); // idle
+    playerSprite.setRow(0);
   }
-  function startPlay() {
+  function startPlay(){
     resetGame();
     gameState = STATE.PLAY;
   }
 
   // —— STATE INPUT ——
-  function handleStateInput() {
-    if (gameState === STATE.MENU) {
-      if (keys['Enter']) { startPlay(); keys['Enter']=false; }
-    }
-    else if (gameState === STATE.PLAY) {
-      if (keys['KeyP']) { gameState=STATE.PAUSE; keys['KeyP']=false; }
-    }
-    else if (gameState === STATE.PAUSE) {
-      if (keys['KeyP']) { gameState=STATE.PLAY; keys['KeyP']=false; }
-      if (keys['KeyQ']) { gameState=STATE.MENU; keys['KeyQ']=false; }
-      if (attributePoints > 0) {
-        if (keys['Digit1']) {
-          playerStats.speedLevel++;     attributePoints--; keys['Digit1']=false;
-        }
-        if (keys['Digit2']) {
-          playerStats.fireRateLevel++;  attributePoints--; keys['Digit2']=false;
-        }
-        if (keys['Digit3']) {
-          playerStats.bulletSpdLevel++; attributePoints--; keys['Digit3']=false;
-        }
+  function handleStateInput(){
+    if (gameState===STATE.MENU){
+      if (keys['Enter']){ startPlay(); keys['Enter']=false; }
+    } else if (gameState===STATE.PLAY){
+      if (keys['KeyP']){ gameState=STATE.PAUSE; keys['KeyP']=false; }
+    } else if (gameState===STATE.PAUSE){
+      if (keys['KeyP']){ gameState=STATE.PLAY; keys['KeyP']=false; }
+      if (keys['KeyQ']){ gameState=STATE.MENU; keys['KeyQ']=false; }
+      if (attributePoints>0){
+        if (keys['Digit1']){ playerStats.speedLevel++;     attributePoints--; keys['Digit1']=false; }
+        if (keys['Digit2']){ playerStats.fireRateLevel++;  attributePoints--; keys['Digit2']=false; }
+        if (keys['Digit3']){ playerStats.bulletSpdLevel++; attributePoints--; keys['Digit3']=false; }
       }
-    }
-    else if (gameState === STATE.GAMEOVER) {
-      if (keys['Enter']) { startPlay(); keys['Enter']=false; }
-      if (keys['KeyQ'])   { gameState=STATE.MENU;   keys['KeyQ']=false; }
+    } else if (gameState===STATE.GAMEOVER){
+      if (keys['Enter']){ startPlay(); keys['Enter']=false; }
+      if (keys['KeyQ'])  { gameState=STATE.MENU;   keys['KeyQ']=false; }
     }
   }
 
   // —— UPDATE ——
-  function update(dt) {
-    // move pickups
-    for (let i=pickups.length-1; i>=0; i--) {
+  function update(dt){
+    // pickups
+    for (let i=pickups.length-1; i>=0; i--){
       pickups[i].update(dt);
       if (pickups[i].offscreen()) pickups.splice(i,1);
     }
     // spawn enemies
-    if (Math.random() < dt*1.2) {
+    if (Math.random() < dt*1.2){
       const y = Math.random()*canvas.height;
       const t = PATTERNS[Math.floor(Math.random()*PATTERNS.length)];
       enemies.push(new Enemy(canvas.width+20,y,t));
       if (enemies.length>40) enemies.shift();
     }
-    // player movement + animate
+    // move & animate player
     const mv = getMoveSpeed();
     if (keys['ArrowUp']||keys['KeyW'])   player.y -= mv*dt;
     if (keys['ArrowDown']||keys['KeyS']) player.y += mv*dt;
@@ -241,7 +231,7 @@
 
     // shooting
     timeSinceShot += dt;
-    if (keys['Space'] && timeSinceShot > 1/getFireRate()) {
+    if (keys['Space'] && timeSinceShot > 1/getFireRate()){
       projectiles.push(
         new Projectile(player.x+player.r+4, player.y, getBulletSpeed(),0)
       );
@@ -249,17 +239,16 @@
     }
     // update & cull projectiles
     projectiles.forEach(p=>p.update(dt));
-    for (let i=projectiles.length-1; i>=0; i--)
+    for (let i=projectiles.length-1;i>=0;i--){
       if (projectiles[i].offscreen()) projectiles.splice(i,1);
-
+    }
     // update enemies
     enemies.forEach(e=>e.update(dt));
-
-    // bullet↔enemy collisions + pickups
-    for (let i=projectiles.length-1; i>=0; i--){
-      for (let j=enemies.length-1; j>=0; j--){
-        const p = projectiles[i], e = enemies[j];
-        if (Math.hypot(p.x-e.x,p.y-e.y) < p.r+e.r) {
+    // collisions & drops
+    for (let i=projectiles.length-1;i>=0;i--){
+      for (let j=enemies.length-1;j>=0;j--){
+        const p=projectiles[i], e=enemies[j];
+        if (Math.hypot(p.x-e.x,p.y-e.y)<p.r+e.r){
           projectiles.splice(i,1);
           const ex=e.x, ey=e.y;
           enemies.splice(j,1);
@@ -269,20 +258,20 @@
       }
     }
     // collect XP
-    for (let i=pickups.length-1; i>=0; i--){
+    for (let i=pickups.length-1;i>=0;i--){
       const pk=pickups[i];
-      if (Math.hypot(pk.x-player.x,pk.y-player.y) < pk.r+player.r) {
+      if (Math.hypot(pk.x-player.x,pk.y-player.y)<pk.r+player.r){
         xp++; pickups.splice(i,1);
-        if (xp >= xpToNext()) {
-          xp -= xpToNext();
+        if (xp>=xpToNext()){
+          xp-=xpToNext();
           playerLevel++;
           attributePoints++;
         }
       }
     }
-    // player↔enemy → GAMEOVER + hit anim
+    // player hit?
     for (let e of enemies){
-      if (Math.hypot(player.x-e.x,player.y-e.y) < player.r+e.r){
+      if (Math.hypot(player.x-e.x,player.y-e.y)<player.r+e.r){
         gameState = STATE.GAMEOVER;
         playerSprite.setRow(1);
       }
@@ -290,10 +279,10 @@
   }
 
   // —— DRAW ——
-  function draw() {
+  function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    if (gameState === STATE.MENU) {
+    if (gameState===STATE.MENU){
       ctx.fillStyle='#0f0';
       ctx.font='48px monospace'; ctx.textAlign='center';
       ctx.fillText('HEAVEN ON EARTH SHUMP', canvas.width/2, canvas.height/2-20);
@@ -322,14 +311,14 @@
     );
 
     // overlays
-    if (gameState===STATE.PAUSE) {
+    if (gameState===STATE.PAUSE){
       ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.fillStyle='#ff0'; ctx.font='32px monospace'; ctx.textAlign='center';
       ctx.fillText('PAUSED', canvas.width/2, canvas.height/2-40);
       ctx.font='18px monospace';
       ctx.fillText('P–Resume  Q–Main Menu', canvas.width/2, canvas.height/2-10);
     }
-    else if (gameState===STATE.GAMEOVER) {
+    else if (gameState===STATE.GAMEOVER){
       ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.fillStyle='#f00'; ctx.font='36px monospace'; ctx.textAlign='center';
       ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2-20);
@@ -340,10 +329,10 @@
 
   // —— MAIN LOOP ——
   let last = 0;
-  function loop(ts) {
+  function loop(ts){
     const dt = (ts - last)/1000; last = ts;
     handleStateInput();
-    if (gameState === STATE.PLAY) update(dt);
+    if (gameState===STATE.PLAY) update(dt);
     draw();
     requestAnimationFrame(loop);
   }
