@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <title>Heaven on Earth SHUMP – Bitmap Padding & Alignment Fix</title>
+  <title>Heaven on Earth SHUMP – Stable Sprite Alignment</title>
   <style>
     body { margin:0; overflow:hidden; background:#000 }
     canvas { display:block }
@@ -14,8 +14,7 @@
   // —— CANVAS SETUP ——
   const canvas = document.getElementById('game');
   const ctx    = canvas.getContext('2d');
-  // disable sub-pixel smoothing for crisp, stable pixels
-  ctx.imageSmoothingEnabled = false;
+  ctx.imageSmoothingEnabled = false;   // disable smoothing for crisp pixels
 
   function resize() {
     canvas.width  = innerWidth;
@@ -41,7 +40,7 @@
   const statConfig = {
     speed:     { base:200, inc:40 },
     fireRate:  { base:4,   inc:1  },
-    bulletSpd: { base:400, inc:100}
+    bulletSpd: { base:400, inc:100 }
   };
   let playerLevel     = 1;
   let xp               = 0;
@@ -66,39 +65,41 @@
 
   // —— ENTITIES ——
   class Entity {
-    constructor(x,y,r,color){ this.x=x; this.y=y; this.r=r; this.color=color; }
+    constructor(x,y,r,color){
+      this.x = x; this.y = y; this.r = r; this.color = color;
+    }
     draw(){
       ctx.fillStyle = this.color;
       ctx.beginPath();
-      ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
+      ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
       ctx.fill();
     }
   }
   class Projectile extends Entity {
     constructor(x,y,vx,vy){
       super(x,y,5,'cyan');
-      this.vx=vx; this.vy=vy;
+      this.vx = vx; this.vy = vy;
     }
     update(dt){ this.x += this.vx * dt; }
-    offscreen(){ return this.x < -this.r || this.x > canvas.width+this.r; }
+    offscreen(){ return this.x < -this.r || this.x > canvas.width + this.r; }
   }
   class Enemy extends Entity {
     constructor(x,y,type){
       super(x,y,12,'red');
       this.type      = type;
-      this.spawnTime = performance.now()/1000;
-      this.speed     = 80 + Math.random()*40;
-      this.homeDelay = 0.6 + Math.random()*0.6;
+      this.spawnTime = performance.now() / 1000;
+      this.speed     = 80 + Math.random() * 40;
+      this.homeDelay = 0.6 + Math.random() * 0.6;
       this.oy        = y;
     }
     update(dt){
-      const t = performance.now()/1000 - this.spawnTime;
+      const t = performance.now() / 1000 - this.spawnTime;
       this.x -= SCROLL_SPEED * dt;
-      if (this.type==='sine') {
-        this.y = this.oy + Math.sin(t*3)*50;
-      } else if (this.type==='homing' && t>this.homeDelay) {
-        let dy = player.y - this.y, m = Math.abs(dy)||1;
-        this.y += (dy/m)*this.speed*dt;
+      if (this.type === 'sine') {
+        this.y = this.oy + Math.sin(t * 3) * 50;
+      } else if (this.type === 'homing' && t > this.homeDelay) {
+        let dy = player.y - this.y, m = Math.abs(dy) || 1;
+        this.y += (dy / m) * this.speed * dt;
       }
     }
   }
@@ -108,69 +109,89 @@
     offscreen(){ return this.x < -this.r; }
   }
 
-  // —— SPRITE-SHEET LOADING VIA JSON ATLAS ——
+  // —— SPRITE-SHEET LOADING & ALIGNMENT ——
   const sheet = new Image();
   sheet.src = 'oldbabysheet.png';
 
-  // exact frame order: idle row then hit row
+  // JSON atlas frames in display order
   const FRAME_ORDER = [
     'idle_0','idle_1','idle_2','idle_3',
     'hit_0', 'hit_1', 'hit_2', 'hit_3'
   ];
 
-  let bitmaps = [], playerSprite;
+  // manual pixel tweaks per frame [optional]
+  const MANUAL_OFFSETS = [
+    { x: 0, y:  0 },  // idle_0
+    { x: 0, y:  0 },  // idle_1
+    { x: 0, y:  0 },  // idle_2
+    { x: 0, y:  0 },  // idle_3
+    { x: 0, y:  0 },  // hit_0
+    { x: 0, y:  0 },  // hit_1
+    { x: 0, y:  0 },  // hit_2
+    { x: 0, y:  0 }   // hit_3
+  ];
 
+  let playerSprite;
   sheet.onload = async () => {
-    // 1) fetch and parse the JSON atlas
     const resp  = await fetch('oldbabysheet.json');
     const atlas = await resp.json();
 
-    // 2) slice out each exact frame by name
-    bitmaps = await Promise.all(
-      FRAME_ORDER.map(async name => {
-        const f = atlas.frames[name].frame;
-        return await createImageBitmap(sheet, f.x, f.y, f.w, f.h);
+    // build frames with bitmap + computed offsets
+    const frames = await Promise.all(
+      FRAME_ORDER.map(async (name, i) => {
+        const meta = atlas.frames[name];
+        const f    = meta.frame;
+        const bmp  = await createImageBitmap(sheet, f.x, f.y, f.w, f.h);
+
+        // center anchor using spriteSourceSize
+        const src = meta.spriteSourceSize;
+        const dst = atlas.meta.size;
+        const cx  = (src.w/2) - (dst.w/2);
+        const cy  = (src.h/2) - (dst.h/2);
+        return {
+          bmp,
+          offX: Math.round(cx + MANUAL_OFFSETS[i].x),
+          offY: Math.round(cy + MANUAL_OFFSETS[i].y)
+        };
       })
     );
 
-    // 3) build your AnimatedSprite
-    playerSprite = new AnimatedSprite(bitmaps, 4, 0.1);
-
+    playerSprite = new AnimatedSprite(frames, 4, 0.1);
     resetGame();
     requestAnimationFrame(loop);
   };
 
+  // —— AnimatedSprite CLASS ——
   class AnimatedSprite {
     constructor(frames, cols, frameDur) {
-      this.frames       = frames;
-      this.cols         = cols;
-      this.frameDur     = frameDur;
-      this.timer        = 0;
-      this.currentFrame = 0;
-      this.row          = 0;
+      this.frames = frames;
+      this.cols   = cols;
+      this.dur    = frameDur;
+      this.t      = 0;
+      this.f      = 0;
+      this.row    = 0;
     }
     setRow(r) {
       if (this.row !== r) {
         this.row = r;
-        this.currentFrame = 0;
-        this.timer = 0;
+        this.t   = 0;
+        this.f   = 0;
       }
     }
     update(dt) {
-      this.timer += dt;
-      if (this.timer >= this.frameDur) {
-        this.timer -= this.frameDur;
-        this.currentFrame = (this.currentFrame + 1) % this.cols;
+      this.t += dt;
+      if (this.t >= this.dur) {
+        this.t -= this.dur;
+        this.f  = (this.f + 1) % this.cols;
       }
     }
     draw(ctx, x, y, scale = 1) {
-      const idx  = this.row * this.cols + this.currentFrame;
-      const bmp  = this.frames[idx];
-      // round to integers so each frame is pixel‐aligned
-      const w    = Math.round(bmp.width  * scale);
-      const h    = Math.round(bmp.height * scale);
-      const dx   = Math.round(x - w/2);
-      const dy   = Math.round(y - h/2);
+      const idx        = this.row * this.cols + this.f;
+      const { bmp, offX, offY } = this.frames[idx];
+      const w          = Math.round(bmp.width  * scale);
+      const h          = Math.round(bmp.height * scale);
+      const dx         = Math.round(x - w/2 + offX);
+      const dy         = Math.round(y - h/2 + offY);
       ctx.drawImage(bmp, dx, dy, w, h);
     }
   }
@@ -195,89 +216,99 @@
 
   // —— STATE INPUT ——
   function handleStateInput(){
-    if (gameState===STATE.MENU){
-      if (keys['Enter']){ startPlay(); keys['Enter']=false; }
-    } else if (gameState===STATE.PLAY){
-      if (keys['KeyP']){ gameState=STATE.PAUSE; keys['KeyP']=false; }
-    } else if (gameState===STATE.PAUSE){
-      if (keys['KeyP']){ gameState=STATE.PLAY; keys['KeyP']=false; }
-      if (keys['KeyQ']){ gameState=STATE.MENU; keys['KeyQ']=false; }
-      if (attributePoints>0){
-        if (keys['Digit1']){ playerStats.speedLevel++;     attributePoints--; keys['Digit1']=false; }
-        if (keys['Digit2']){ playerStats.fireRateLevel++;  attributePoints--; keys['Digit2']=false; }
-        if (keys['Digit3']){ playerStats.bulletSpdLevel++; attributePoints--; keys['Digit3']=false; }
+    if (gameState === STATE.MENU) {
+      if (keys['Enter']) { startPlay(); keys['Enter'] = false; }
+    }
+    else if (gameState === STATE.PLAY) {
+      if (keys['KeyP']) { gameState = STATE.PAUSE; keys['KeyP'] = false; }
+    }
+    else if (gameState === STATE.PAUSE) {
+      if (keys['KeyP']) { gameState = STATE.PLAY; keys['KeyP'] = false; }
+      if (keys['KeyQ']) { gameState = STATE.MENU; keys['KeyQ'] = false; }
+      if (attributePoints > 0) {
+        if (keys['Digit1']) { playerStats.speedLevel++;     attributePoints--; keys['Digit1'] = false; }
+        if (keys['Digit2']) { playerStats.fireRateLevel++;  attributePoints--; keys['Digit2'] = false; }
+        if (keys['Digit3']) { playerStats.bulletSpdLevel++; attributePoints--; keys['Digit3'] = false; }
       }
-    } else if (gameState===STATE.GAMEOVER){
-      if (keys['Enter']){ startPlay(); keys['Enter']=false; }
-      if (keys['KeyQ'])  { gameState=STATE.MENU;   keys['KeyQ']=false; }
+    }
+    else if (gameState === STATE.GAMEOVER) {
+      if (keys['Enter']) { startPlay(); keys['Enter'] = false; }
+      if (keys['KeyQ'])  { gameState = STATE.MENU;   keys['KeyQ']  = false; }
     }
   }
 
   // —— UPDATE ——
   function update(dt){
     // pickups
-    for (let i=pickups.length-1; i>=0; i--){
+    for (let i = pickups.length - 1; i >= 0; i--) {
       pickups[i].update(dt);
-      if (pickups[i].offscreen()) pickups.splice(i,1);
+      if (pickups[i].offscreen()) pickups.splice(i, 1);
     }
+
     // spawn enemies
-    if (Math.random() < dt*1.2){
-      const y = Math.random()*canvas.height;
-      const t = PATTERNS[Math.floor(Math.random()*PATTERNS.length)];
-      enemies.push(new Enemy(canvas.width+20,y,t));
-      if (enemies.length>40) enemies.shift();
+    if (Math.random() < dt * 1.2) {
+      const y = Math.random() * canvas.height;
+      const t = PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
+      enemies.push(new Enemy(canvas.width + 20, y, t));
+      if (enemies.length > 40) enemies.shift();
     }
+
     // move & animate player
     const mv = getMoveSpeed();
-    if (keys['ArrowUp']||keys['KeyW'])   player.y -= mv*dt;
-    if (keys['ArrowDown']||keys['KeyS']) player.y += mv*dt;
-    player.y = Math.max(player.r, Math.min(canvas.height-player.r, player.y));
+    if (keys['ArrowUp'] || keys['KeyW'])    player.y -= mv * dt;
+    if (keys['ArrowDown'] || keys['KeyS'])  player.y += mv * dt;
+    player.y = Math.max(player.r, Math.min(canvas.height - player.r, player.y));
     playerSprite.setRow(0);
     playerSprite.update(dt);
 
     // shooting
     timeSinceShot += dt;
-    if (keys['Space'] && timeSinceShot > 1/getFireRate()){
+    if (keys['Space'] && timeSinceShot > 1 / getFireRate()) {
       projectiles.push(
-        new Projectile(player.x+player.r+4, player.y, getBulletSpeed(),0)
+        new Projectile(player.x + player.r + 4, player.y, getBulletSpeed(), 0)
       );
       timeSinceShot = 0;
     }
+
     // update & cull projectiles
-    projectiles.forEach(p=>p.update(dt));
-    for (let i=projectiles.length-1;i>=0;i--){
-      if (projectiles[i].offscreen()) projectiles.splice(i,1);
+    projectiles.forEach(p => p.update(dt));
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      if (projectiles[i].offscreen()) projectiles.splice(i, 1);
     }
+
     // update enemies
-    enemies.forEach(e=>e.update(dt));
+    enemies.forEach(e => e.update(dt));
+
     // collisions & drops
-    for (let i=projectiles.length-1;i>=0;i--){
-      for (let j=enemies.length-1;j>=0;j--){
-        const p=projectiles[i], e=enemies[j];
-        if (Math.hypot(p.x-e.x,p.y-e.y)<p.r+e.r){
-          projectiles.splice(i,1);
-          const ex=e.x, ey=e.y;
-          enemies.splice(j,1);
-          if (Math.random()<0.3) pickups.push(new Pickup(ex,ey));
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const p = projectiles[i], e = enemies[j];
+        if (Math.hypot(p.x - e.x, p.y - e.y) < p.r + e.r) {
+          projectiles.splice(i, 1);
+          const ex = e.x, ey = e.y;
+          enemies.splice(j, 1);
+          if (Math.random() < 0.3) pickups.push(new Pickup(ex, ey));
           break;
         }
       }
     }
+
     // collect XP
-    for (let i=pickups.length-1;i>=0;i--){
-      const pk=pickups[i];
-      if (Math.hypot(pk.x-player.x,pk.y-player.y)<pk.r+player.r){
-        xp++; pickups.splice(i,1);
-        if (xp>=xpToNext()){
-          xp-=xpToNext();
+    for (let i = pickups.length - 1; i >= 0; i--) {
+      const pk = pickups[i];
+      if (Math.hypot(pk.x - player.x, pk.y - player.y) < pk.r + player.r) {
+        xp++; pickups.splice(i, 1);
+        if (xp >= xpToNext()) {
+          xp -= xpToNext();
           playerLevel++;
           attributePoints++;
         }
       }
     }
+
     // player hit?
-    for (let e of enemies){
-      if (Math.hypot(player.x-e.x,player.y-e.y)<player.r+e.r){
+    for (let e of enemies) {
+      if (Math.hypot(player.x - e.x, player.y - e.y) < player.r + e.r) {
         gameState = STATE.GAMEOVER;
         playerSprite.setRow(1);
       }
@@ -286,22 +317,22 @@
 
   // —— DRAW ——
   function draw(){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (gameState===STATE.MENU){
-      ctx.fillStyle='#0f0';
-      ctx.font='48px monospace'; ctx.textAlign='center';
-      ctx.fillText('HEAVEN ON EARTH SHUMP', canvas.width/2, canvas.height/2-20);
-      ctx.font='24px monospace';
-      ctx.fillText('Press ENTER to Start', canvas.width/2, canvas.height/2+20);
+    if (gameState === STATE.MENU) {
+      ctx.fillStyle = '#0f0';
+      ctx.font = '48px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('HEAVEN ON EARTH SHUMP', canvas.width/2, canvas.height/2 - 20);
+      ctx.font = '24px monospace';
+      ctx.fillText('Press ENTER to Start', canvas.width/2, canvas.height/2 + 20);
       return;
     }
 
-    // draw world first, then player on top
+    // world: draw enemies/projectiles/pickups first, then player on top
     ctx.save();
-      enemies.forEach(e=>e.draw());
-      projectiles.forEach(p=>p.draw());
-      pickups.forEach(pk=>pk.draw());
+      enemies.forEach(e => e.draw());
+      projectiles.forEach(p => p.draw());
+      pickups.forEach(pk => pk.draw());
       playerSprite.draw(ctx, player.x, player.y, 0.8);
     ctx.restore();
 
@@ -317,28 +348,29 @@
     );
 
     // overlays
-    if (gameState===STATE.PAUSE){
+    if (gameState === STATE.PAUSE) {
       ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.fillStyle='#ff0'; ctx.font='32px monospace'; ctx.textAlign='center';
-      ctx.fillText('PAUSED', canvas.width/2, canvas.height/2-40);
+      ctx.fillText('PAUSED', canvas.width/2, canvas.height/2 - 40);
       ctx.font='18px monospace';
-      ctx.fillText('P–Resume  Q–Main Menu', canvas.width/2, canvas.height/2-10);
+      ctx.fillText('P–Resume  Q–Main Menu', canvas.width/2, canvas.height/2 - 10);
     }
-    else if (gameState===STATE.GAMEOVER){
+    else if (gameState === STATE.GAMEOVER) {
       ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.fillStyle='#f00'; ctx.font='36px monospace'; ctx.textAlign='center';
-      ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2-20);
+      ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 20);
       ctx.font='20px monospace';
-      ctx.fillText('Enter–Restart  Q–Main Menu', canvas.width/2, canvas.height/2+20);
+      ctx.fillText('Enter–Restart  Q–Main Menu', canvas.width/2, canvas.height/2 + 20);
     }
   }
 
   // —— MAIN LOOP ——
   let last = 0;
   function loop(ts){
-    const dt = (ts - last)/1000; last = ts;
+    const dt = (ts - last)/1000;
+    last = ts;
     handleStateInput();
-    if (gameState===STATE.PLAY) update(dt);
+    if (gameState === STATE.PLAY) update(dt);
     draw();
     requestAnimationFrame(loop);
   }
