@@ -105,50 +105,47 @@
     offscreen(){ return this.x < -this.r; }
   }
 
-  // —— SPRITE-SHEET LOADING & PADDING FIX ——
+  // —— SPRITE-SHEET & JSON LOADING ——
   const sheet = new Image();
   sheet.src = 'oldbabysheet.png';
-
-  const COLS = 4, ROWS = 2;
-  let bitmaps = [], playerSprite;
-
-  sheet.onload = async () => {
-    // compute uniform frame size and padding
-    const totalW = sheet.width, totalH = sheet.height;
-    const fw     = Math.floor(totalW  / COLS);
-    const fh     = Math.floor(totalH  / ROWS);
-    const padX   = Math.round((totalW - fw * COLS) / 2);
-    const padY   = Math.round((totalH - fh * ROWS) / 2);
-
-    // slice out each frame into an ImageBitmap
-    for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
-        const sx = padX + col * fw;
-        const sy = padY + row * fh;
-        bitmaps.push(
-          await createImageBitmap(sheet, sx, sy, fw, fh)
-        );
-      }
-    }
-
-    // build animated sprite (row 0=idle, row 1=hit)
-    playerSprite = new AnimatedSprite(bitmaps, COLS, 0.1);
-    resetGame();
-    requestAnimationFrame(loop);
+  let playerFrames = {}; // { "idle_0": ImageBitmap, ... }
+  let playerSprite;
+  let spriteFrameNames = {
+    idle:  ["idle_0","idle_1","idle_2","idle_3"],
+    hit:   ["hit_0","hit_1","hit_2","hit_3"]
   };
 
+  async function loadSpriteSheet() {
+    // Load JSON
+    const json = await fetch('oldbabysheet.json').then(res => res.json());
+    // Wait for image to load
+    await new Promise(res => { if (sheet.complete) res(); else sheet.onload = res; });
+
+    // Create ImageBitmaps for each frame
+    const entries = Object.entries(json.frames);
+    await Promise.all(entries.map(async ([name, data]) => {
+      const { x, y, w, h } = data.frame;
+      playerFrames[name] = await createImageBitmap(sheet, x, y, w, h);
+    }));
+
+    // Now you can use playerFrames["idle_0"], etc.
+    playerSprite = new AnimatedSprite(playerFrames, spriteFrameNames, 0.1);
+    resetGame();
+    requestAnimationFrame(loop);
+  }
+
   class AnimatedSprite {
-    constructor(frames, cols, frameDur) {
-      this.frames       = frames;
-      this.cols         = cols;
-      this.frameDur     = frameDur;
-      this.timer        = 0;
+    constructor(frames, frameNames, frameDur) {
+      this.frames = frames; // { name: ImageBitmap }
+      this.frameNames = frameNames; // { idle: [...], hit: [...] }
+      this.frameDur = frameDur;
+      this.timer = 0;
       this.currentFrame = 0;
-      this.row          = 0;
+      this.row = "idle";
     }
-    setRow(r) {
-      if (this.row !== r) {
-        this.row = r;
+    setRow(row) {
+      if (this.row !== row) {
+        this.row = row;
         this.currentFrame = 0;
         this.timer = 0;
       }
@@ -157,14 +154,17 @@
       this.timer += dt;
       if (this.timer >= this.frameDur) {
         this.timer -= this.frameDur;
-        this.currentFrame = (this.currentFrame + 1) % this.cols;
+        const arr = this.frameNames[this.row];
+        this.currentFrame = (this.currentFrame + 1) % arr.length;
       }
     }
     draw(ctx, x, y, scale = 1) {
-      const idx = this.row * this.cols + this.currentFrame;
-      const bmp = this.frames[idx];
-      const w   = bmp.width  * scale;
-      const h   = bmp.height * scale;
+      const arr = this.frameNames[this.row];
+      const name = arr[this.currentFrame];
+      const bmp = this.frames[name];
+      if (!bmp) return;
+      const w = bmp.width * scale;
+      const h = bmp.height * scale;
       ctx.drawImage(bmp, x - w/2, y - h/2, w, h);
     }
   }
@@ -180,7 +180,7 @@
     xp              = 0;
     playerLevel     = 1;
     attributePoints = 0;
-    playerSprite.setRow(0);
+    if (playerSprite) playerSprite.setRow("idle");
   }
   function startPlay(){
     resetGame();
@@ -226,8 +226,10 @@
     if (keys['ArrowUp']||keys['KeyW'])   player.y -= mv*dt;
     if (keys['ArrowDown']||keys['KeyS']) player.y += mv*dt;
     player.y = Math.max(player.r, Math.min(canvas.height-player.r, player.y));
-    playerSprite.setRow(0);
-    playerSprite.update(dt);
+    if (playerSprite) {
+      playerSprite.setRow(gameState===STATE.GAMEOVER ? "hit" : "idle");
+      playerSprite.update(dt);
+    }
 
     // shooting
     timeSinceShot += dt;
@@ -273,7 +275,7 @@
     for (let e of enemies){
       if (Math.hypot(player.x-e.x,player.y-e.y)<player.r+e.r){
         gameState = STATE.GAMEOVER;
-        playerSprite.setRow(1);
+        if (playerSprite) playerSprite.setRow("hit");
       }
     }
   }
@@ -293,7 +295,7 @@
 
     // world
     ctx.save();
-      playerSprite.draw(ctx, player.x, player.y, 0.8);
+      if (playerSprite) playerSprite.draw(ctx, player.x, player.y, 0.8);
       enemies.forEach(e=>e.draw());
       projectiles.forEach(p=>p.draw());
       pickups.forEach(pk=>pk.draw());
@@ -336,6 +338,10 @@
     draw();
     requestAnimationFrame(loop);
   }
+
+  // —— STARTUP ——
+  loadSpriteSheet();
+
 </script>
 </body>
 </html>
