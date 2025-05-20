@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <title>Heaven on Earth SHUMP – Bitmap Padding Fix</title>
+  <title>Heaven on Earth SHUMP – Bitmap Padding & Alignment Fix</title>
   <style>
     body { margin:0; overflow:hidden; background:#000 }
     canvas { display:block }
@@ -14,6 +14,9 @@
   // —— CANVAS SETUP ——
   const canvas = document.getElementById('game');
   const ctx    = canvas.getContext('2d');
+  // disable sub-pixel smoothing for crisp, stable pixels
+  ctx.imageSmoothingEnabled = false;
+
   function resize() {
     canvas.width  = innerWidth;
     canvas.height = innerHeight;
@@ -161,11 +164,14 @@
       }
     }
     draw(ctx, x, y, scale = 1) {
-      const idx = this.row * this.cols + this.currentFrame;
-      const bmp = this.frames[idx];
-      const w   = bmp.width  * scale;
-      const h   = bmp.height * scale;
-      ctx.drawImage(bmp, x - w/2, y - h/2, w, h);
+      const idx  = this.row * this.cols + this.currentFrame;
+      const bmp  = this.frames[idx];
+      // round to integers so each frame is pixel‐aligned
+      const w    = Math.round(bmp.width  * scale);
+      const h    = Math.round(bmp.height * scale);
+      const dx   = Math.round(x - w/2);
+      const dy   = Math.round(y - h/2);
+      ctx.drawImage(bmp, dx, dy, w, h);
     }
   }
 
@@ -291,12 +297,12 @@
       return;
     }
 
-    // world
+    // draw world first, then player on top
     ctx.save();
-      playerSprite.draw(ctx, player.x, player.y, 0.8);
       enemies.forEach(e=>e.draw());
       projectiles.forEach(p=>p.draw());
       pickups.forEach(pk=>pk.draw());
+      playerSprite.draw(ctx, player.x, player.y, 0.8);
     ctx.restore();
 
     // HUD
