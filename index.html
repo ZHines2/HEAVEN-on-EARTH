@@ -11,316 +11,239 @@
 <body>
   <canvas id="game"></canvas>
   <script>
-    // —— CANVAS SETUP ——
+    // --- CONFIG & CONSTANTS ---
+    const STATE = { MENU:'MENU', PLAY:'PLAY', PAUSE:'PAUSE', GAMEOVER:'GAMEOVER' };
+    const KEYS = {
+      UP: ['ArrowUp','KeyW'],
+      DOWN: ['ArrowDown','KeyS'],
+      PAUSE: 'KeyP',
+      QUIT: 'KeyQ',
+      SHOOT: 'Space',
+      START: 'Enter',
+      UPGRADE: ['Digit1','Digit2','Digit3']
+    };
+    const PLAYER_BASE = { speed:200, fire:4, bullet:400 };
+    const PLAYER_INC = { speed:40, fire:1, bullet:100 };
+    const SCROLL_SPEED = 120;
+    const PATTERNS = ['straight','sine','homing'];
+    const FRAME_FILES = [
+      'Oldbabyidle1.png','Oldbabyidle2.png','Oldbabyidle3.png','Oldbabyidle4.png',
+      'Oldbabyhit1.png','Oldbabyhit2.png','Oldbabyhit3.png','Oldbabyhit4.png'
+    ];
+
+    // --- CANVAS SETUP ---
     const canvas = document.getElementById('game');
-    const ctx    = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = false; // crisp pixels
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    const resize = () => { canvas.width = innerWidth; canvas.height = innerHeight; };
+    window.addEventListener('resize', resize); resize();
 
-    function resize() {
-      canvas.width  = innerWidth;
-      canvas.height = innerHeight;
-    }
-    window.addEventListener('resize', resize);
-    resize();
-
-    // —— INPUT ——
+    // --- INPUT STATE ---
     const keys = {};
     window.addEventListener('keydown', e => keys[e.code] = true);
     window.addEventListener('keyup',   e => keys[e.code] = false);
 
-    // —— STATE & STATS ——
-    const STATE = { MENU:'MENU', PLAY:'PLAY', PAUSE:'PAUSE', GAMEOVER:'GAMEOVER' };
-    let gameState = STATE.MENU;
-
-    const playerStats = { speedLevel:1, fireRateLevel:1, bulletSpdLevel:1 };
-    const statConfig = {
-      speed:     { base:200, inc:40 },
-      fireRate:  { base:4,   inc:1  },
-      bulletSpd: { base:400, inc:100 }
-    };
+    // --- PLAYER STATS & LEVEL ---
+    let playerStats = { speed:1, fire:1, bullet:1 };
     let playerLevel = 1, xp = 0, attributePoints = 0;
-    function xpToNext()   { return playerLevel * 5; }
-    function getMoveSpeed(){ return statConfig.speed.base + statConfig.speed.inc * (playerStats.speedLevel - 1); }
-    function getFireRate() { return statConfig.fireRate.base + statConfig.fireRate.inc * (playerStats.fireRateLevel - 1); }
-    function getBulletSpeed(){ return statConfig.bulletSpd.base + statConfig.bulletSpd.inc * (playerStats.bulletSpdLevel - 1); }
+    const xpToNext = () => playerLevel * 5;
+    const getSpeed     = () => PLAYER_BASE.speed + PLAYER_INC.speed * (playerStats.speed-1);
+    const getFireRate  = () => PLAYER_BASE.fire  + PLAYER_INC.fire  * (playerStats.fire-1);
+    const getBulletSpd = () => PLAYER_BASE.bullet+ PLAYER_INC.bullet* (playerStats.bullet-1);
 
-    // —— WORLD SETTINGS ——
-    const SCROLL_SPEED = 120;
-    const PATTERNS     = ['straight','sine','homing'];
-
-    // —— ENTITIES ——
+    // --- ENTITY CLASSES ---
     class Entity {
-      constructor(x,y,r,color){
-        this.x = x; this.y = y; this.r = r; this.color = color;
-      }
-      draw(){
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
-        ctx.fill();
-      }
+      constructor(x,y,r,color){ this.x=x; this.y=y; this.r=r; this.color=color; }
+      draw(){ ctx.fillStyle=this.color; ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,Math.PI*2); ctx.fill(); }
     }
     class Projectile extends Entity {
-      constructor(x,y,vx,vy){
-        super(x,y,5,'cyan');
-        this.vx = vx; this.vy = vy;
-      }
-      update(dt){ this.x += this.vx * dt; }
-      offscreen(){ return this.x < -this.r || this.x > canvas.width + this.r; }
+      constructor(x,y,vx,vy) { super(x,y,5,'cyan'); this.vx=vx; this.vy=vy; }
+      update(dt) { this.x += this.vx*dt; }
+      offscreen(){ return this.x < -this.r || this.x > canvas.width+this.r; }
     }
     class Enemy extends Entity {
       constructor(x,y,type){
         super(x,y,12,'red');
-        this.type      = type;
-        this.spawnTime = performance.now() / 1000;
-        this.speed     = 80 + Math.random()*40;
-        this.homeDelay = 0.6 + Math.random()*0.6;
-        this.oy        = y;
+        this.type=type; this.spawn=performance.now()/1000;
+        this.oy=y; this.speed=80+Math.random()*40; this.homeDelay=0.6+Math.random()*0.6;
       }
       update(dt){
-        const t = performance.now()/1000 - this.spawnTime;
-        this.x -= SCROLL_SPEED * dt;
-        if (this.type === 'sine') {
-          this.y = this.oy + Math.sin(t*3)*50;
-        } else if (this.type === 'homing' && t > this.homeDelay) {
-          let dy = player.y - this.y, m = Math.abs(dy) || 1;
-          this.y += (dy/m) * this.speed * dt;
+        const t=performance.now()/1000-this.spawn;
+        this.x -= SCROLL_SPEED*dt;
+        if(this.type==='sine') this.y=this.oy+Math.sin(t*3)*50;
+        else if(this.type==='homing'&&t>this.homeDelay){
+          let dy=player.y-this.y, m=Math.abs(dy)||1;
+          this.y += (dy/m)*this.speed*dt;
         }
       }
     }
     class Pickup extends Entity {
       constructor(x,y){ super(x,y,8,'lime'); }
-      update(dt){ this.x -= SCROLL_SPEED * dt; }
+      update(dt){ this.x -= SCROLL_SPEED*dt; }
       offscreen(){ return this.x < -this.r; }
     }
 
-    // —— CLEAN SPRITE LOADING ——
-    const FRAME_FILES = [
-      'Oldbabyidle1.png', 'Oldbabyidle2.png',
-      'Oldbabyidle3.png', 'Oldbabyidle4.png',
-      'Oldbabyhit1.png',  'Oldbabyhit2.png',
-      'Oldbabyhit3.png',  'Oldbabyhit4.png'
-    ];
-
-    async function loadFrames() {
-      const promises = FRAME_FILES.map(src => new Promise(resolve => {
-        const img = new Image();
-        img.src = src;
-        img.onload = async () => {
-          const bmp = await createImageBitmap(img);
-          resolve({ bmp, offX: 0, offY: 0 });
-        };
-      }));
-      return Promise.all(promises);
-    }
-
-    // —— AnimatedSprite CLASS ——
+    // --- SPRITE LOADING & ANIMATION ---
+    const loadFrames = async () => Promise.all(FRAME_FILES.map(src =>
+      new Promise(res=>{
+        const img=new Image(); img.src=src;
+        img.onload=async()=>res({ bmp:await createImageBitmap(img), offX:0, offY:0 });
+      })
+    ));
     class AnimatedSprite {
-      constructor(frames, cols, frameDur) {
-        this.frames = frames;
-        this.cols   = cols;
-        this.dur    = frameDur;
-        this.t      = 0;
-        this.f      = 0;
-        this.row    = 0;
-      }
-      setRow(r) {
-        if (this.row !== r) {
-          this.row = r;
-          this.t   = 0;
-          this.f   = 0;
-        }
-      }
-      update(dt) {
-        this.t += dt;
-        if (this.t >= this.dur) {
-          this.t -= this.dur;
-          this.f  = (this.f + 1) % this.cols;
-        }
-      }
-      draw(ctx, x, y, scale = 1) {
-        const idx = this.row * this.cols + this.f;
-        const { bmp, offX, offY } = this.frames[idx];
-        const w   = Math.round(bmp.width  * scale);
-        const h   = Math.round(bmp.height * scale);
-        const dx  = Math.round(x - w/2 + offX);
-        const dy  = Math.round(y - h/2 + offY);
-        ctx.drawImage(bmp, dx, dy, w, h);
+      constructor(frames,cols,dur){ this.frames=frames; this.cols=cols; this.dur=dur; this.t=0; this.f=0; this.row=0; }
+      setRow(r){ if(this.row!==r){ this.row=r; this.t=0; this.f=0; } }
+      update(dt){ this.t+=dt; if(this.t>=this.dur){ this.t-=this.dur; this.f=(this.f+1)%this.cols; } }
+      draw(ctx,x,y,scale=1){
+        const idx=this.row*this.cols+this.f, {bmp,offX,offY}=this.frames[idx];
+        const w=Math.round(bmp.width*scale), h=Math.round(bmp.height*scale);
+        ctx.drawImage(bmp,Math.round(x-w/2+offX),Math.round(y-h/2+offY),w,h);
       }
     }
 
-    let playerSprite;
-    (async () => {
-      const frames = await loadFrames();
-      // 4 columns: first row=idle, second row=hit
-      playerSprite = new AnimatedSprite(frames, 4, 0.1);
-      resetGame();
-      requestAnimationFrame(loop);
-    })();
-
-    // —— GAME STATE & RESET ——
+    // --- GAME STATE ---
+    let gameState = STATE.MENU, playerSprite;
     let player, enemies, projectiles, pickups, timeSinceShot;
-    function resetGame(){
-      player          = { x: canvas.width*0.2, y: canvas.height/2, r:14 };
-      enemies         = [];
-      projectiles     = [];
-      pickups         = [];
-      timeSinceShot   = 0;
-      xp              = 0;
-      playerLevel     = 1;
-      attributePoints = 0;
+    const resetGame = () => {
+      player={x:canvas.width*0.2, y:canvas.height/2, r:14};
+      enemies=[]; projectiles=[]; pickups=[];
+      timeSinceShot=0; xp=0; playerLevel=1; attributePoints=0;
+      playerStats={speed:1,fire:1,bullet:1};
       playerSprite.setRow(0);
-    }
-    function startPlay(){
-      resetGame();
-      gameState = STATE.PLAY;
-    }
+    };
+    const startPlay = () => { resetGame(); gameState=STATE.PLAY; };
 
-    // —— INPUT HANDLING ——
-    function handleStateInput(){
-      if (gameState === STATE.MENU) {
-        if (keys['Enter']) { startPlay(); keys['Enter'] = false; }
-      }
-      else if (gameState === STATE.PLAY) {
-        if (keys['KeyP']) { gameState = STATE.PAUSE; keys['KeyP'] = false; }
-      }
-      else if (gameState === STATE.PAUSE) {
-        if (keys['KeyP']) { gameState = STATE.PLAY; keys['KeyP'] = false; }
-        if (keys['KeyQ']) { gameState = STATE.MENU; keys['KeyQ'] = false; }
-        if (attributePoints > 0) {
-          if (keys['Digit1']) { playerStats.speedLevel++;     attributePoints--; keys['Digit1'] = false; }
-          if (keys['Digit2']) { playerStats.fireRateLevel++;  attributePoints--; keys['Digit2'] = false; }
-          if (keys['Digit3']) { playerStats.bulletSpdLevel++; attributePoints--; keys['Digit3'] = false; }
+    // --- INPUT HANDLING ---
+    function handleInput(){
+      if(gameState===STATE.MENU && keys[KEYS.START]){ startPlay(); keys[KEYS.START]=false; }
+      else if(gameState===STATE.PLAY && keys[KEYS.PAUSE]){ gameState=STATE.PAUSE; keys[KEYS.PAUSE]=false; }
+      else if(gameState===STATE.PAUSE){
+        if(keys[KEYS.PAUSE]){ gameState=STATE.PLAY; keys[KEYS.PAUSE]=false; }
+        if(keys[KEYS.QUIT]) { gameState=STATE.MENU; keys[KEYS.QUIT]=false; }
+        if(attributePoints>0){
+          if(keys['Digit1']){ playerStats.speed++;  attributePoints--; keys['Digit1']=false; }
+          if(keys['Digit2']){ playerStats.fire++;   attributePoints--; keys['Digit2']=false; }
+          if(keys['Digit3']){ playerStats.bullet++; attributePoints--; keys['Digit3']=false; }
         }
       }
-      else if (gameState === STATE.GAMEOVER) {
-        if (keys['Enter']) { startPlay(); keys['Enter'] = false; }
-        if (keys['KeyQ'])  { gameState = STATE.MENU;   keys['KeyQ']  = false; }
+      else if(gameState===STATE.GAMEOVER){
+        if(keys[KEYS.START]){ startPlay(); keys[KEYS.START]=false; }
+        if(keys[KEYS.QUIT]) { gameState=STATE.MENU; keys[KEYS.QUIT]=false; }
       }
     }
 
-    // —— UPDATE ——
+    // --- UPDATE ---
     function update(dt){
-      // pickups
-      for (let i = pickups.length - 1; i >= 0; i--) {
-        pickups[i].update(dt);
-        if (pickups[i].offscreen()) pickups.splice(i,1);
+      pickups = pickups.filter(pk => { pk.update(dt); return !pk.offscreen(); });
+      // Enemy spawn
+      if(Math.random()<dt*1.2){
+        const y=Math.random()*canvas.height, t=PATTERNS[Math.random()*PATTERNS.length|0];
+        enemies.push(new Enemy(canvas.width+20,y,t)); if(enemies.length>40) enemies.shift();
       }
-      // spawn enemies
-      if (Math.random() < dt * 1.2) {
-        const y = Math.random() * canvas.height;
-        const t = PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
-        enemies.push(new Enemy(canvas.width + 20, y, t));
-        if (enemies.length > 40) enemies.shift();
+      // Move player
+      let mv=getSpeed();
+      if(KEYS.UP.some(k=>keys[k]))   player.y-=mv*dt;
+      if(KEYS.DOWN.some(k=>keys[k])) player.y+=mv*dt;
+      player.y=Math.max(player.r,Math.min(canvas.height-player.r,player.y));
+      playerSprite.setRow(0); playerSprite.update(dt);
+      // Shooting
+      timeSinceShot+=dt;
+      if(keys[KEYS.SHOOT] && timeSinceShot>1/getFireRate()){
+        projectiles.push(new Projectile(player.x+player.r+4,player.y,getBulletSpd(),0));
+        timeSinceShot=0;
       }
-      // move & animate player
-      const mv = getMoveSpeed();
-      if (keys['ArrowUp'] || keys['KeyW'])    player.y -= mv * dt;
-      if (keys['ArrowDown'] || keys['KeyS'])  player.y += mv * dt;
-      player.y = Math.max(player.r, Math.min(canvas.height - player.r, player.y));
-      playerSprite.setRow(0);
-      playerSprite.update(dt);
-      // shooting
-      timeSinceShot += dt;
-      if (keys['Space'] && timeSinceShot > 1 / getFireRate()) {
-        projectiles.push(new Projectile(player.x + player.r + 4, player.y, getBulletSpeed(), 0));
-        timeSinceShot = 0;
-      }
-      // update & cull projectiles
-      projectiles.forEach(p => p.update(dt));
-      for (let i = projectiles.length - 1; i >= 0; i--) {
-        if (projectiles[i].offscreen()) projectiles.splice(i,1);
-      }
-      // update enemies
-      enemies.forEach(e => e.update(dt));
-      // collisions & drops
-      for (let i = projectiles.length - 1; i >= 0; i--) {
-        for (let j = enemies.length - 1; j >= 0; j--) {
-          const p = projectiles[i], e = enemies[j];
-          if (Math.hypot(p.x - e.x, p.y - e.y) < p.r + e.r) {
+      // Update & cull projectiles
+      projectiles.forEach(p=>p.update(dt));
+      projectiles = projectiles.filter(p=>!p.offscreen());
+      // Update enemies
+      enemies.forEach(e=>e.update(dt));
+      // Collisions: proj-enemy
+      for(let i=projectiles.length-1;i>=0;i--){
+        for(let j=enemies.length-1;j>=0;j--){
+          const p=projectiles[i],e=enemies[j];
+          if(Math.hypot(p.x-e.x,p.y-e.y)<p.r+e.r){
             projectiles.splice(i,1);
-            const ex = e.x, ey = e.y;
-            enemies.splice(j,1);
-            if (Math.random() < 0.3) pickups.push(new Pickup(ex, ey));
+            let {x:ex,y:ey}=e; enemies.splice(j,1);
+            if(Math.random()<0.3) pickups.push(new Pickup(ex,ey));
             break;
           }
         }
       }
-      // collect XP & level up
-      for (let i = pickups.length - 1; i >= 0; i--) {
-        const pk = pickups[i];
-        if (Math.hypot(pk.x - player.x, pk.y - player.y) < pk.r + player.r) {
+      // Collect XP & level-up
+      for(let i=pickups.length-1;i>=0;i--){
+        const pk=pickups[i];
+        if(Math.hypot(pk.x-player.x,pk.y-player.y)<pk.r+player.r){
           xp++; pickups.splice(i,1);
-          if (xp >= xpToNext()) {
-            xp -= xpToNext();
-            playerLevel++;
-            attributePoints++;
-          }
+          if(xp>=xpToNext()){ xp-=xpToNext(); playerLevel++; attributePoints++; }
         }
       }
-      // player hit?
-      for (let e of enemies) {
-        if (Math.hypot(player.x - e.x, player.y - e.y) < player.r + e.r) {
-          gameState = STATE.GAMEOVER;
-          playerSprite.setRow(1);
+      // Player hit
+      for(let e of enemies){
+        if(Math.hypot(player.x-e.x,player.y-e.y)<player.r+e.r){
+          gameState=STATE.GAMEOVER; playerSprite.setRow(1);
         }
       }
     }
 
-    // —— DRAW ——
+    // --- DRAW ---
     function draw(){
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (gameState === STATE.MENU) {
-        ctx.fillStyle = '#0f0';
-        ctx.font = '48px monospace'; ctx.textAlign = 'center';
-        ctx.fillText('HEAVEN ON EARTH SHUMP', canvas.width/2, canvas.height/2 - 20);
-        ctx.font = '24px monospace';
-        ctx.fillText('Press ENTER to Start', canvas.width/2, canvas.height/2 + 20);
-        return;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      if(gameState===STATE.MENU){
+        ctx.fillStyle='#0f0'; ctx.font='48px monospace'; ctx.textAlign='center';
+        ctx.fillText('HEAVEN ON EARTH SHUMP',canvas.width/2,canvas.height/2-20);
+        ctx.font='24px monospace';
+        ctx.fillText('Press ENTER to Start',canvas.width/2,canvas.height/2+20); return;
       }
       ctx.save();
-        enemies.forEach(e => e.draw());
-        projectiles.forEach(p => p.draw());
-        pickups.forEach(p => p.draw());
-        playerSprite.draw(ctx, player.x, player.y, 0.8);
+        enemies.forEach(e=>e.draw());
+        projectiles.forEach(p=>p.draw());
+        pickups.forEach(p=>p.draw());
+        playerSprite.draw(ctx,player.x,player.y,0.8);
       ctx.restore();
       // HUD
       ctx.setTransform(1,0,0,1,0,0);
-      ctx.font = '16px monospace'; ctx.fillStyle = '#0f0'; ctx.textAlign = 'left';
-      ctx.fillText(`Lvl ${playerLevel}  XP: ${xp}/${xpToNext()}`, 10, 20);
+      ctx.font='16px monospace'; ctx.fillStyle='#0f0'; ctx.textAlign='left';
+      ctx.fillText(`Lvl ${playerLevel}  XP: ${xp}/${xpToNext()}`,10,20);
       ctx.fillText(
-        `1-Speed Lv:${playerStats.speedLevel}` +
-        ` 2-Fire Lv:${playerStats.fireRateLevel}` +
-        ` 3-Spd Lv:${playerStats.bulletSpdLevel}`,
+        `1-Speed Lv:${playerStats.speed}`+
+        ` 2-Fire Lv:${playerStats.fire}`+
+        ` 3-Spd Lv:${playerStats.bullet}`,
         10, 40
       );
       // overlays
-      if (gameState === STATE.PAUSE) {
-        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0,0,canvas.width,canvas.height);
-        ctx.fillStyle = '#ff0'; ctx.font = '32px monospace'; ctx.textAlign = 'center';
-        ctx.fillText('PAUSED', canvas.width/2, canvas.height/2 - 40);
-        ctx.font = '18px monospace';
-        ctx.fillText('P–Resume  Q–Main Menu', canvas.width/2, canvas.height/2 - 10);
+      if(gameState===STATE.PAUSE){
+        ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle='#ff0'; ctx.font='32px monospace'; ctx.textAlign='center';
+        ctx.fillText('PAUSED',canvas.width/2,canvas.height/2-40);
+        ctx.font='18px monospace';
+        ctx.fillText('P–Resume  Q–Main Menu',canvas.width/2,canvas.height/2-10);
       }
-      else if (gameState === STATE.GAMEOVER) {
-        ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0,0,canvas.width,canvas.height);
-        ctx.fillStyle = '#f00'; ctx.font = '36px monospace'; ctx.textAlign = 'center';
-        ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 20);
-        ctx.font = '20px monospace';
-        ctx.fillText('Enter–Restart  Q–Main Menu', canvas.width/2, canvas.height/2 + 20);
+      else if(gameState===STATE.GAMEOVER){
+        ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle='#f00'; ctx.font='36px monospace'; ctx.textAlign='center';
+        ctx.fillText('GAME OVER',canvas.width/2,canvas.height/2-20);
+        ctx.font='20px monospace';
+        ctx.fillText('Enter–Restart  Q–Main Menu',canvas.width/2,canvas.height/2+20);
       }
     }
 
-    // —— MAIN LOOP ——
-    let last = 0;
+    // --- MAIN LOOP ---
+    let last=0;
     function loop(ts){
-      const dt = (ts - last)/1000;
-      last = ts;
-      handleStateInput();
-      if (gameState === STATE.PLAY) update(dt);
+      const dt=(ts-last)/1000; last=ts;
+      handleInput();
+      if(gameState===STATE.PLAY) update(dt);
       draw();
       requestAnimationFrame(loop);
     }
+
+    // --- INIT ---
+    (async ()=>{
+      const frames=await loadFrames();
+      playerSprite=new AnimatedSprite(frames,4,0.1);
+      resetGame();
+      requestAnimationFrame(loop);
+    })();
   </script>
 </body>
 </html>
